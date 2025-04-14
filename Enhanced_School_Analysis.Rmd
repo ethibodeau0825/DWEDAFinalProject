@@ -1,0 +1,739 @@
+
+---
+title: "Exploring School Engagement and Expectations Using LLM-Assisted Wrangling"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+This project explores how school climate benchmarks (such as engagement, safety, communication, and expectations) correlate with academic performance across NYC school districts. By integrating traditional data analysis with LLM-assisted insights, we aim to uncover how these benchmarks may help explain grade outcomes and district performance differences.
+
+---
+
+## Load Libraries and Dataset
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggcorrplot)
+library(pheatmap)
+
+# Load the dataset
+school_data <- read_csv("C:/Users/efthi/Downloads/cleaned_school_data.csv")
+head(school_data)
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+school_data$numeric_grade <- grade_scale[school_data$overallgrade]
+
+```
+
+---
+
+## Correlation Heatmap of Numeric Features
+
+```{r}
+# Ensure all selected columns are numeric
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+school_data <- school_data %>% mutate(numeric_grade = grade_scale[overallgrade])
+
+cor_data <- school_data %>%
+  select(numeric_grade, peerindex, overallscore2012, overallpercentile2012,
+         progressscore2012, performancescore2012, environmentscore2012,
+         additionalcredit2012, parentresponserate, teacherresponserate, 
+         studentresponserate, safetyscore, communicationscore, 
+         engagementscore, expectationsscore) %>%
+  mutate(across(everything(), ~as.numeric(.)))  # Convert all columns to numeric
+
+# Drop rows with missing values
+cor_data <- na.omit(cor_data)
+
+# Compute correlation matrix
+cor_matrix <- cor(cor_data)
+
+# Visualize the correlation matrix
+library(pheatmap)
+pheatmap(cor_matrix,
+         main = "Correlation Heatmap",
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         display_numbers = TRUE,
+         fontsize_number = 8)
+
+
+```
+```{r}
+# Create correlation matrix
+cor_data <- school_data %>%
+  select(numeric_grade, peerindex, overallscore2012, overallpercentile2012,
+         progressscore2012, performancescore2012, environmentscore2012,
+         additionalcredit2012, parentresponserate, teacherresponserate, 
+         studentresponserate, safetyscore, communicationscore, 
+         engagementscore, expectationsscore) %>%
+  mutate(across(everything(), ~as.numeric(.)))
+
+cor_data <- na.omit(cor_data)
+cor_matrix <- cor(cor_data, use = "complete.obs")
+
+
+# Convert to long format for Tableau
+cor_long <- as.data.frame(as.table(cor_matrix))
+
+# Save as CSV
+write.csv(cor_long, "correlation_matrix_long.csv", row.names = FALSE)
+
+```
+
+---
+
+Convert Overall Grades to Numeric Values
+
+```{r}
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+
+school_data <- school_data %>% mutate(numeric_grade = grade_scale[overallgrade])
+```
+
+---
+
+Average Grade by District
+
+```{r}
+avg_grade_by_district <- school_data %>%
+  group_by(district) %>%
+  summarise(average_grade = mean(numeric_grade, na.rm = TRUE)) %>%
+  arrange(desc(average_grade))
+
+print(avg_grade_by_district)
+```
+
+---
+
+## Average Climate Benchmarks by District
+
+```{r}
+district_comparison <- school_data %>%
+  group_by(district) %>%
+  summarise(
+    avg_grade = mean(numeric_grade, na.rm = TRUE),
+    avg_safety = mean(safetyscore, na.rm = TRUE),
+    avg_communication = mean(communicationscore, na.rm = TRUE),
+    avg_engagement = mean(engagementscore, na.rm = TRUE),
+    avg_expectations = mean(expectationsscore, na.rm = TRUE)
+  ) %>%
+  arrange(desc(avg_grade))
+
+print(district_comparison)
+```
+```{r}
+district_comparison <- school_data %>%
+  group_by(district) %>%
+  summarise(
+    avg_grade = mean(numeric_grade, na.rm = TRUE),
+    combined_benchmark = mean(
+      rowMeans(across(c(safetyscore, communicationscore, engagementscore, expectationsscore)), na.rm = TRUE),
+      na.rm = TRUE
+    )
+  ) %>%
+  arrange(desc(combined_benchmark))  # Optional sorting
+
+print(district_comparison)
+
+
+```
+```{r}
+correlation <- cor(district_comparison$avg_grade, district_comparison$combined_benchmark, use = "complete.obs")
+print(paste("Correlation:", round(correlation, 3)))
+
+ggplot(district_comparison, aes(x = combined_benchmark, y = avg_grade)) +
+  geom_point(color = "darkblue", size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(
+    title = "Do Higher Benchmarks Predict Higher Grades?",
+    x = "Combined Benchmark Score",
+    y = "Average Grade"
+  )
+model <- lm(avg_grade ~ combined_benchmark, data = district_comparison)
+summary(model)
+
+
+
+```
+
+---
+
+## Visualize Grades vs Benchmark Scores
+
+```{r}
+district_long <- district_comparison %>%
+  pivot_longer(cols = starts_with("avg_"), names_to = "metric", values_to = "value")
+
+ggplot(district_long, aes(x = factor(district), y = value, fill = metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Grade vs. Benchmark Scores by District",
+    x = "District",
+    y = "Score",
+    fill = "Metric"
+  ) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+---
+
+## Map Benchmark Score to Letter Grade and Compare
+
+```{r}
+# Convert relevant scores to numeric
+school_data <- school_data %>%
+  mutate(
+    progressscore2012 = as.numeric(progressscore2012),
+    performancescore2012 = as.numeric(performancescore2012),
+    environmentscore2012 = as.numeric(environmentscore2012),
+    additionalcredit2012 = as.numeric(additionalcredit2012)
+  )
+
+# Create comparison table
+score_analysis_by_district <- school_data %>%
+  group_by(district) %>%
+  summarise(
+    avg_numeric_grade = mean(numeric_grade, na.rm = TRUE),
+    avg_progress_score = mean(progressscore2012, na.rm = TRUE),
+    avg_performance_score = mean(performancescore2012, na.rm = TRUE),
+    avg_environment_score = mean(environmentscore2012, na.rm = TRUE),
+    avg_additional_credit = mean(additionalcredit2012, na.rm = TRUE)
+  ) %>%
+  mutate(
+    avg_benchmark_score = rowMeans(select(., avg_progress_score, avg_performance_score, avg_environment_score, avg_additional_credit), na.rm = TRUE),
+    benchmark_letter = case_when(
+      avg_benchmark_score >= 45 ~ "A",
+      avg_benchmark_score >= 35 ~ "B",
+      avg_benchmark_score >= 25 ~ "C",
+      avg_benchmark_score >= 15 ~ "D",
+      TRUE ~ "F"
+    ),
+    actual_letter = names(grade_scale)[round(avg_numeric_grade)]
+  )
+
+# Visualize comparison of letter grades
+viz_data <- score_analysis_by_district %>%
+  select(district, actual_letter, benchmark_letter) %>%
+  pivot_longer(cols = c(actual_letter, benchmark_letter), names_to = "grade_type", values_to = "grade")
+
+ggplot(viz_data, aes(x = factor(district), fill = grade)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~grade_type) +
+  labs(
+    title = "Actual vs Benchmark Letter Grades by District",
+    x = "District",
+    y = "Count",
+    fill = "Grade"
+  ) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+---
+```{r}
+library(dplyr)
+
+# First, make sure you have a numeric version of the overall grade
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+
+school_data <- school_data %>%
+  mutate(numeric_grade = grade_scale[overallgrade])
+
+# Now group by school_type and get the average
+avg_grade_by_school_type <- school_data %>%
+  group_by(school_type) %>%
+  summarise(
+    average_grade = mean(numeric_grade, na.rm = TRUE),
+    count = n()
+  ) %>%
+  arrange(desc(average_grade))
+
+print(avg_grade_by_school_type)
+
+
+ggplot(avg_grade_by_school_type, aes(x = reorder(school_type, -average_grade), y = average_grade)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Average Grade by School Type",
+    x = "School Type",
+    y = "Average Grade (Numeric)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+Is community involvement a key factor
+```{r}
+cor(school_data$parentresponserate, school_data$engagementscore, use = "complete.obs")
+lm(engagementscore ~ parentresponserate + teacherresponserate + school_type, data = school_data)
+
+```
+--
+
+Is there correlation between schools hitting or missing certain benchmarks?
+
+```{r}
+school_data <- school_data %>%
+  mutate(
+    hit_engagement = ifelse(engagementscore >= 8, 1, 0),
+    hit_expectations = ifelse(expectationsscore >= 8, 1, 0)
+  )
+
+# Correlation between hitting two benchmarks
+cor(school_data$hit_engagement, school_data$hit_expectations, use = "complete.obs")
+
+```
+Does parent or staff involvement affect how students hit benchmarks?
+```{r}
+summary(lm(engagementscore ~ parentresponserate + teacherresponserate, data = school_data))
+```
+Which school chnaged there grade the mosst from progress to final
+```{r}
+# Grade mapping function
+grade_to_num <- function(grade) {
+  return(switch(grade,
+                "A" = 4,
+                "B" = 3,
+                "C" = 2,
+                "D" = 1,
+                "F" = 0,
+                NA))  # return NA if the grade is NA
+}
+
+# Apply the mapping to progress and overall grades
+school_data$progress_numeric <- sapply(school_data$progressgrade2012, grade_to_num)
+school_data$final_numeric <- sapply(school_data$overallgrade, grade_to_num)
+
+# Calculate grade change
+school_data$grade_change <- school_data$final_numeric - school_data$progress_numeric
+
+sorted_data <- school_data[order(-abs(school_data$grade_change), school_data$grade_change), ]
+
+# View top rows with largest changes
+head(sorted_data[, c("school_name", "progressgrade2012", "overallgrade", "grade_change")], 20)
+
+```
+
+
+What factors are most strongly correlated with a school's overall grade?
+```{r}
+
+# Apply conversion to overall grade
+school_data$overall_numeric <- sapply(school_data$overallgrade, grade_to_num)
+
+# Convert other relevant columns to numeric
+numeric_columns <- c("peerindex", "parentresponserate", "teacherresponserate",
+                     "safetyscore", "communicationscore", "engagementscore",
+                     "expectationsscore", "additionalcredit2012")
+
+# Make sure all are numeric
+school_data[numeric_columns] <- lapply(school_data[numeric_columns], function(x) as.numeric(as.character(x)))
+
+# Create a subset for correlation
+cor_data <- school_data[, c("overall_numeric", numeric_columns)]
+
+# Remove rows with NA
+cor_data <- na.omit(cor_data)
+
+# Compute correlation matrix
+cor_matrix <- cor(cor_data, use = "complete.obs")
+
+# View correlation with overall grade
+cor_with_overall <- cor_matrix["overall_numeric", ]
+cor_with_overall <- sort(cor_with_overall[-1], decreasing = TRUE)  # exclude self-correlation
+
+# Print
+print("Correlation of features with Overall Grade (Numeric):")
+print(round(cor_with_overall, 3))
+
+```
+
+Do schools with higher parent/teacher response rates tend to have better overall grades?
+```{r}
+school_data$overall_numeric <- sapply(school_data$overallgrade, grade_to_num)
+
+# Convert response rates to numeric
+school_data$parentresponserate <- as.numeric(school_data$parentresponserate)
+school_data$teacherresponserate <- as.numeric(school_data$teacherresponserate)
+
+# Remove rows with missing values
+sub_data <- na.omit(school_data[, c("overall_numeric", "parentresponserate", "teacherresponserate")])
+
+# Compute correlation
+cor_parent <- cor(sub_data$overall_numeric, sub_data$parentresponserate)
+cor_teacher <- cor(sub_data$overall_numeric, sub_data$teacherresponserate)
+
+# Print results
+cat("Correlation between overall grade and parent response rate:", round(cor_parent, 3), "\n")
+cat("Correlation between overall grade and teacher response rate:", round(cor_teacher, 3), "\n")
+
+library(ggplot2)
+
+# Scatter plot with trend line for parent response
+ggplot(sub_data, aes(x = parentresponserate, y = overall_numeric)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", col = "blue") +
+  labs(title = "Parent Response Rate vs Overall Grade",
+       x = "Parent Response Rate", y = "Overall Grade (Numeric)")
+
+```
+Excluding elemenatry schools
+```{r}
+# Grade mapping
+school_data$overall_numeric <- sapply(school_data$overallgrade, grade_to_num)
+
+# Convert response rates to numeric
+school_data$parentresponserate <- as.numeric(school_data$parentresponserate)
+school_data$teacherresponserate <- as.numeric(school_data$teacherresponserate)
+
+# 🔍 Exclude elementary schools
+non_elem_data <- subset(school_data, !grepl("Elementary", school_type, ignore.case = TRUE))
+
+# Remove rows with NA
+sub_data <- na.omit(non_elem_data[, c("overall_numeric", "parentresponserate", "teacherresponserate")])
+
+# Correlation
+cor_parent <- cor(sub_data$overall_numeric, sub_data$parentresponserate)
+cor_teacher <- cor(sub_data$overall_numeric, sub_data$teacherresponserate)
+
+# Print results
+cat("Correlation (excluding Elementary) - Parent:", round(cor_parent, 3), "\n")
+cat("Correlation (excluding Elementary) - Teacher:", round(cor_teacher, 3), "\n")
+
+# Plot for Parent Response
+library(ggplot2)
+ggplot(sub_data, aes(x = parentresponserate, y = overall_numeric)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", col = "blue") +
+  labs(title = "Parent Response Rate vs Overall Grade (Non-Elementary)",
+       x = "Parent Response Rate", y = "Overall Grade (Numeric)")
+
+```
+
+
+
+
+
+
+Which school Types tend to perform better overall
+```{r}
+
+school_data$overall_numeric <- sapply(school_data$overallgrade, grade_to_num)
+
+# Group by school type and compute average grade
+avg_by_type <- aggregate(overall_numeric ~ school_type, school_data, mean, na.rm = TRUE)
+
+# Sort descending
+avg_by_type <- avg_by_type[order(-avg_by_type$overall_numeric), ]
+
+print(avg_by_type)
+
+```
+Do districts who have higher response rates are the ones with the higher grades?
+```{r}
+
+# Convert response rates to numeric
+school_data$parentresponserate <- as.numeric(school_data$parentresponserate)
+school_data$teacherresponserate <- as.numeric(school_data$teacherresponserate)
+
+# Group by district and compute averages
+library(dplyr)
+
+district_summary <- school_data %>%
+  filter(!is.na(overall_numeric), !is.na(parentresponserate), !is.na(teacherresponserate)) %>%
+  group_by(district) %>%
+  summarise(
+    avg_grade = mean(overall_numeric, na.rm = TRUE),
+    avg_parent_response = mean(parentresponserate, na.rm = TRUE),
+    avg_teacher_response = mean(teacherresponserate, na.rm = TRUE),
+    n_schools = n()
+  )
+
+# Correlation between avg response rates and avg grade
+cor_parent <- cor(district_summary$avg_grade, district_summary$avg_parent_response)
+cor_teacher <- cor(district_summary$avg_grade, district_summary$avg_teacher_response)
+
+cat("Correlation between average parent response rate and average grade:", round(cor_parent, 3), "\n")
+cat("Correlation between average teacher response rate and average grade:", round(cor_teacher, 3), "\n")
+
+library(ggplot2)
+
+ggplot(district_summary, aes(x = avg_parent_response, y = avg_grade)) +
+  geom_point(color = "blue", size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkblue") +
+  labs(title = "Average Parent Response Rate vs Average Grade by District",
+       x = "Average Parent Response Rate", y = "Average Overall Grade")
+
+# Repeat with teacher
+ggplot(district_summary, aes(x = avg_teacher_response, y = avg_grade)) +
+  geom_point(color = "orange", size = 3) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+  labs(title = "Average Teacher Response Rate vs Average Grade by District",
+       x = "Average Teacher Response Rate", y = "Average Overall Grade")
+
+
+```
+Does improvement in a specific benchmark (e.g., safety) predict an increase in grades better than others?
+```{r}
+lm(numeric_grade ~ safetyscore + communicationscore + engagementscore + expectationsscore, data = school_data)
+
+```
+
+Clustering
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Select and scale relevant climate benchmark features
+cluster_data <- school_data %>%
+  select(safetyscore, communicationscore, engagementscore, expectationsscore) %>%
+  na.omit()  # remove incomplete rows
+
+scaled_cluster_data <- scale(cluster_data)
+
+# Elbow Method to determine optimal clusters
+wss <- vector()
+for (k in 1:10) {
+  kmeans_result <- kmeans(scaled_cluster_data, centers = k, nstart = 25)
+  wss[k] <- kmeans_result$tot.withinss
+}
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of Clusters (k)", ylab = "Total Within-Cluster Sum of Squares",
+     main = "Elbow Method for Optimal k")
+
+# Apply k-means clustering with chosen k
+set.seed(42)
+kmeans_result <- kmeans(scaled_cluster_data, centers = 3, nstart = 25)
+
+# Attach original cluster labels back to full dataset
+school_data$cluster <- NA
+school_data$cluster[as.numeric(rownames(cluster_data))] <- kmeans_result$cluster
+
+# ---- REORDER CLUSTERS BY AVERAGE GRADE ----
+# Step 1: Summarize current clusters by avg grade
+cluster_summary <- school_data %>%
+  filter(!is.na(cluster)) %>%
+  group_by(cluster) %>%
+  summarise(avg_grade = mean(overall_numeric, na.rm = TRUE)) %>%
+  arrange(avg_grade)
+
+# Step 2: Create mapping from old to new cluster labels
+cluster_order_map <- setNames(1:nrow(cluster_summary), cluster_summary$cluster)
+
+# Step 3: Apply new labels to school_data
+school_data$cluster_reordered <- cluster_order_map[as.character(school_data$cluster)]
+
+# Step 4: Resummarize by reordered clusters
+reordered_summary <- school_data %>%
+  filter(!is.na(cluster_reordered)) %>%
+  group_by(cluster_reordered) %>%
+  summarise(
+    avg_grade = mean(overall_numeric, na.rm = TRUE),
+    avg_safety = mean(safetyscore, na.rm = TRUE),
+    avg_communication = mean(communicationscore, na.rm = TRUE),
+    avg_engagement = mean(engagementscore, na.rm = TRUE),
+    avg_expectations = mean(expectationsscore, na.rm = TRUE),
+    n_schools = n()
+  )
+
+print(reordered_summary)
+
+# Visualize reordered clusters using PCA
+pca <- prcomp(scaled_cluster_data)
+pca_df <- as.data.frame(pca$x[, 1:2])  # first two principal components
+pca_df$cluster <- factor(school_data$cluster_reordered[as.numeric(rownames(cluster_data))])
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.6, size = 3) +
+  labs(title = "School Clusters Based on Climate Benchmarks",
+       x = "Principal Component 1", y = "Principal Component 2") +
+  theme_minimal()
+
+
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# Create your cluster summary data manually or from previous code
+cluster_summary <- data.frame(
+  cluster = factor(1:4),
+  avg_grade = c(3.222222, 1.989071, 2.681495, 2.996310),
+  avg_safety = c(8.761765, 6.653070, 7.449340, 8.126876),
+  avg_communication = c(8.245425, 6.203070, 6.891254, 7.528272),
+  avg_engagement = c(8.487908, 6.494298, 7.199175, 7.812042),
+  avg_expectations = c(8.692157, 6.838158, 7.545050, 8.107155)
+)
+
+# Convert to long format for ggplot
+cluster_long <- cluster_summary %>%
+  pivot_longer(cols = -cluster, names_to = "Metric", values_to = "Value")
+
+# Bar plot
+ggplot(cluster_long, aes(x = Metric, y = Value, fill = cluster)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Cluster Comparison of Grades and Climate Benchmarks",
+       x = "Metric", y = "Average Score") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+```
+Which Benchamrk is hardest to hit
+```{r}
+# Load necessary libraries
+library(dplyr)
+
+# Select only the benchmark columns
+benchmark_data <- school_data %>%
+  select(safetyscore, communicationscore, engagementscore, expectationsscore) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  na.omit()
+
+# Calculate the average score for each benchmark
+benchmark_means <- colMeans(benchmark_data)
+
+# Print the means
+print(benchmark_means)
+
+# Identify the hardest benchmark (lowest average)
+hardest_benchmark <- names(benchmark_means)[which.min(benchmark_means)]
+cat("The hardest benchmark to hit is:", hardest_benchmark, "with a mean score of", round(min(benchmark_means), 2), "\n")
+
+
+```
+regression analysis
+```{r}
+# Convert overall grade to numeric if not already done
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+school_data$numeric_grade <- grade_scale[school_data$overallgrade]
+
+# Fit linear regression model
+model <- lm(numeric_grade ~ safetyscore + communicationscore + engagementscore +
+              expectationsscore + parentresponserate + teacherresponserate +
+              peerindex, data = school_data)
+
+# View model summary
+summary(model)
+
+```
+
+
+Which school type has the highest average overall grade?
+```{r}
+school_data %>%
+  group_by(school_type) %>%
+  summarise(avg_grade = mean(overall_numeric, na.rm = TRUE)) %>%
+  arrange(avg_grade)
+
+```
+
+YABC = Young adult borough centers: afternoon and evening programs designed to meet the educational needs of high school students who are behind in credit or have adult responsibilities that make it hard to attend school during the day
+
+
+```{r}
+# Select only the benchmark columns
+benchmark_data <- school_data %>%
+  select(safetyscore, communicationscore, engagementscore, expectationsscore) %>%
+  mutate(across(everything(), ~as.numeric(.))) %>%
+  na.omit()
+
+# Calculate correlation matrix
+benchmark_cor <- cor(benchmark_data)
+
+# View as table
+print(round(benchmark_cor, 2))
+
+# Optional: Visualize as heatmap
+library(pheatmap)
+
+pheatmap(benchmark_cor,
+         main = "Correlation Between School Climate Benchmarks",
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         breaks = seq(0, 1, length.out = 101),  # Force color scale from 0 to 1
+         display_numbers = TRUE,
+         fontsize_number = 10,
+         border_color = NA)
+
+
+```
+
+
+```{r}
+# Assuming `school_data` is your dataframe and has columns: district, parentresponserate, numeric_grade
+
+# Convert overall grade to numeric if not already done
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+school_data$numeric_grade <- grade_scale[school_data$overallgrade]
+
+# Group by district and compute mean values
+district_averages <- school_data %>%
+  group_by(district) %>%
+  summarise(
+    avg_grade = mean(numeric_grade, na.rm = TRUE),
+    avg_parent_response = mean(parentresponserate, na.rm = TRUE)
+  )
+
+# Calculate correlation
+correlation <- cor(district_averages$avg_grade, district_averages$avg_parent_response, use = "complete.obs")
+
+# Print result
+print(correlation)
+
+```
+
+```{r}
+# Step 1: Convert grades to numeric if needed
+grade_scale <- c("A" = 4, "B" = 3, "C" = 2, "D" = 1, "F" = 0)
+school_data$numeric_grade <- grade_scale[school_data$overallgrade]
+
+# Step 2: Define threshold and flag benchmarks hit per school (e.g., score ≥ 8)
+school_data <- school_data %>%
+  mutate(
+    hit_safety = safetyscore >= 8,
+    hit_communication = communicationscore >= 8,
+    hit_engagement = engagementscore >= 8,
+    hit_expectations = expectationsscore >= 8,
+    total_hits = hit_safety + hit_communication + hit_engagement + hit_expectations
+  )
+
+# Step 3: View correlation (optional)
+cor(school_data$total_hits, school_data$numeric_grade, use = "complete.obs")
+
+# Step 4: Create a summary table per school
+library(ggplot2)
+
+ggplot(school_data, aes(x = factor(total_hits), y = numeric_grade)) +
+  geom_boxplot(fill = "lightblue", color = "darkblue") +
+  labs(
+    title = "Grades by Number of Benchmarks Hit per School",
+    x = "Number of Benchmarks Hit (out of 4)",
+    y = "Numeric Grade (0 = F, 4 = A)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# Select just the benchmark columns
+benchmarks <- school_data %>%
+  select(safetyscore, communicationscore, engagementscore, expectationsscore) %>%
+  na.omit()
+
+# Compute correlation matrix
+cor_matrix <- round(cor(benchmarks), 2)
+
+# Convert to long format for Tableau
+library(reshape2)
+cor_long <- melt(cor_matrix)
+colnames(cor_long) <- c("Variable1", "Variable2", "Correlation")
+
+# Save for Tableau
+write.csv(cor_long, "Benchmark_Correlation_Heatmap.csv", row.names = FALSE)
+
+```
+
